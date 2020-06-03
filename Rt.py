@@ -1,4 +1,4 @@
-#!/usr/local/opt/python@3.8/bin/python3 -u
+#!/usr/local/bin/python3 -u
 # -*- coding: utf-8 -*-
 # We generally follow PEP 8: http://legacy.python.org/dev/peps/pep-0008/
 
@@ -26,10 +26,11 @@ SAMPLING_LENGTH = 7     # days
 import sys
 import os
 import time
-import csv
-import fileio
+import csv      # DELETE
+import fileio   # DELETE
 import argparse
 import numpy
+import pandas
 from scipy import stats
 
 #
@@ -55,35 +56,18 @@ if __name__ == '__main__':
     if not os.path.isfile(infile):
         print('   File {} not found.'.format(infile))
         exit()
-
     print('   {}'.format(infile))
-    f = open(infile,'r')
-    rows = csv.reader(f)
-    headers = next(rows)
-    if headers[6] != 'Province_State' and headers[11] != '1/22/20':
+    df = pandas.read_csv(infile)
+    columns = list(df)
+    if columns[6] != 'Province_State' and columns[11] != '1/22/20':
         print('   File format may have changed. Columns may be different or shifted.')
         exit()
-
-    #dates = numpy.array([time.strptime(d,'%m/%d/%y') for d in headers[11:]], dtype=numpy.datetime64)
-    #print(headers[11:])
-    #dates = [datetime.strptime(d,'%m/%d/%y') for d in headers[11:]]
-
-    dates = numpy.array([numpy.datetime64("20{}-{}-{}".format(y, m.zfill(2), d.zfill(2))) for m, d, y in (s.split("/") for s in headers[11:])])
-    #t1 = np.array([np.datetime64("{}-{}-{}".format(c[:4], b, a)) for a, b, c in (s.split("/", 2) for s in t)])
-
-    # Import number of cases
-    total_cases = {}
-    for state in STATES:
-        total_cases[state] = [0 for date in dates]
-    for row in rows:
-        for i, date in enumerate(dates):
-            if row[6] in STATES:
-                total_cases[row[6]][i] += int(row[i+11])
-
-    # Add aggregate calculations for United States
-    total_cases['United States'] = []
-    for i in range(len(dates)):
-        total_cases['United States'].append(sum(total_cases[state][i] for state in STATES))
+    dates = numpy.array([numpy.datetime64("20{}-{}-{}".format(y, m.zfill(2), d.zfill(2))) for m, d, y in (s.split("/") for s in columns[11:])])
+    df.drop(['UID', 'iso2', 'iso3', 'code3', 'FIPS', 'Admin2', 'Country_Region', \
+             'Lat', 'Long_', 'Combined_Key'], axis=1, inplace=True)
+    df = df.groupby(['Province_State']).sum().reset_index()
+    df.set_index('Province_State', inplace=True)
+    df.loc['United States'] = df.sum()
 
     # Calculate new cases
     new_cases = {}
@@ -91,9 +75,9 @@ if __name__ == '__main__':
         new_cases[state] = []
         for i, date in enumerate(dates):
             if i == 0:
-                new_cases[state].append(total_cases[state][0])
+                new_cases[state].append(df.loc[state][0])
             else:
-                new_cases[state].append(total_cases[state][i]-total_cases[state][i-1])
+                new_cases[state].append(df.loc[state][i]-df.loc[state][i-1])
 
     # Calculate infectious cases
     infectious_cases = {}
@@ -114,8 +98,8 @@ if __name__ == '__main__':
             baseline_infectious_cases = infectious_cases[state][i-SAMPLING_LENGTH]
             if baseline_infectious_cases > 20 and i >= SAMPLING_LENGTH:   #noise filter
                 y = numpy.full(SAMPLING_LENGTH, baseline_infectious_cases)
-                y += numpy.array(total_cases[state][i-SAMPLING_LENGTH:i])
-                y -= total_cases[state][i-SAMPLING_LENGTH]
+                y += df.loc[state][i-SAMPLING_LENGTH:i]
+                y -= df.loc[state][i-SAMPLING_LENGTH]
                 log_y = numpy.log(y)
                 x = list(range(SAMPLING_LENGTH))
                 slope, intercept, r_value, p_value, std_err = stats.linregress(x,log_y)
@@ -126,7 +110,7 @@ if __name__ == '__main__':
     # Internal integrity check
     numrows = len(dates)
     for state in STATES + ['United States']:
-        if numrows != len(total_cases[state]) \
+        if numrows != len(df.loc[state]) \
         or numrows != len(new_cases[state]) \
         or numrows != len(infectious_cases[state]) \
         or numrows != len(Rt[state]):
@@ -139,17 +123,12 @@ if __name__ == '__main__':
     print('   {:>20}   {:^5}   {:^9}   {:^9}   {:^9}'.format('Region', 'Rt', 'Total', 'New', 'Infectious'))
     print('   {:>20}   {:^5}   {:^9}   {:^9}   {:^9}'.format('-'*20, '-'*5, '-'*9, '-'*9, '-'*9))
     for state in STATES + ['United States']:
-        print('   {:>20}   {:0.3f}   {:9,}   {:9,}   {:9,}'.format(state, Rt[state][-1], total_cases[state][-1], new_cases[state][-1], infectious_cases[state][-1]))
+        print('   {:>20}   {:0.3f}   {:9,}   {:9,}   {:9,}'.format(state, Rt[state][-1], df.loc[state][-1], new_cases[state][-1], infectious_cases[state][-1]))
 
     print('Writing files...')
-    Total_cases_obj = fileio.Table()
-    Total_cases_obj.filename = os.path.join(args.output_path, 'total_cases.csv')
-    print('   {}'.format(Total_cases_obj.filename))
-    Total_cases_obj.headers = ['date'] + STATES + ['United States']
-    Total_cases_obj.write_metadata(overwrite=True)
-    for i in range(len(dates)):
-        row = [dates[i]] + [total_cases[state][i] for state in STATES + ['United States']]
-        Total_cases_obj.write([row])
+    filename = os.path.join(args.output_path, 'cases.csv')
+    df.to_csv(outfile)
+    print('   {}'.format(outfile))
 
     Rt_obj = fileio.Table()
     Rt_obj.filename = os.path.join(args.output_path, 'Rt.csv')
@@ -159,6 +138,4 @@ if __name__ == '__main__':
     for i in range(len(dates)):
         row = [dates[i]] + [Rt[state][i] for state in STATES + ['United States']]
         Rt_obj.write([row])
-
-
     print('Done.\n')
