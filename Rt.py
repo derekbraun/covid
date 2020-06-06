@@ -26,8 +26,6 @@ SAMPLING_LENGTH = 7     # days
 import sys
 import os
 import time
-import csv      # DELETE
-import fileio   # DELETE
 import argparse
 import numpy
 import pandas
@@ -75,40 +73,17 @@ if __name__ == '__main__':
     Rt = pandas.DataFrame(index = STATES + ['United States'], columns = dates)
     Rt.index.name = 'Province_State'
     for state in STATES + ['United States']:
-        new_cases = []
         for i, date in enumerate(dates):
-            # 1. find num of infectious cases on first day of sampling period
-            #       defined as: number of new cases in the 14 days _preceding_
-            #                   the first day of the sampling period
-            if i == 0:
-                infected = 0
-            elif i < 14:
-                infected = cases.loc[state][i] - cases.loc[state][0]
-            else:
-                infected = cases.loc[state][i] - cases.loc[state][i-14]
-
-            # 2. calculate new cases
-            if i == 0:
-                new_cases += [cases.loc[state][i]]
-            else:
-                new_cases += [cases.loc[state][i]-cases.loc[state][i-1]]
-
-            # 3. check that there are enough cases and length for a valid Rt calculation
-            if cases.loc[state][i] > 20 and i > SAMPLING_LENGTH:
-                #y = numpy.full(SAMPLING_LENGTH, infected)
-                y = cases.loc[state][i-SAMPLING_LENGTH+1:i+1]
+            if i > SAMPLING_LENGTH + 13 and cases.loc[state][i] > 20:
+                #y = cases.loc[state][i-SAMPLING_LENGTH+1:i+1].to_numpy() - cases.loc[state][i-SAMPLING_LENGTH-14+1:i-14+1].to_numpy()
+                y = cases.loc[state][i-SAMPLING_LENGTH+1:i+1].to_numpy() - cases.loc[state][i-SAMPLING_LENGTH-14+1]
                 log_y = numpy.log(y)
                 x = list(range(SAMPLING_LENGTH))
-                slope, intercept, r_value, p_value, std_err = stats.linregress(x,log_y)
+                slope, intercept, r_value, p_value, std_err = stats.linregress(x, log_y)
                 Rt.loc[state][i] = slope*SERIAL_INTERVAL
             else:
                 Rt.loc[state][i] = numpy.nan
 
-    # Internal integrity check
-    for state in STATES + ['United States']:
-        if len(dates) != len(cases.loc[state]) or len(dates) != len(Rt.loc[state]):
-            print("Error! Number of rows aren't even. Check algorithm.")
-            exit()
 
     print()
     print('   Estimated Rt as of {}'.format(numpy.datetime64(dates[-1]).item().strftime('%b %d')))
@@ -116,7 +91,7 @@ if __name__ == '__main__':
     print('   {:>20}   {:^9}   {:^5}'.format('Region', 'Cases', 'Rt'))
     print('   {:>20}   {:^9}   {:^5}'.format('-'*20, '-'*9, '-'*5))
     for state in STATES + ['United States']:
-        print('   {:>20}   {:9,}   {:0.3f}'.format(state, cases.loc[state][-1], Rt.loc[state][-1]))
+        print('   {:>20}   {:9,}   {:0.3f}'.format(state, int(cases.loc[state][-1]), Rt.loc[state][-1]))
 
     print('Writing files...')
     for df, filename in zip([cases, Rt], ['cases.csv', 'Rt.csv']):

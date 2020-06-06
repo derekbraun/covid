@@ -30,7 +30,6 @@ import pandas
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt, lines
-import fileio
 
 #see: http://matplotlib.sourceforge.net/users/customizing.html
 BLUE = '#00457c'
@@ -88,8 +87,8 @@ if __name__ == '__main__':
         date_fmt = matplotlib.dates.DateFormatter('%b')   # https://docs.python.org/3/library/datetime.html#strftime-strptime-behavior
 
         def rt_plot(ax, X, Y, shaded, title):
-            ax.set_ylim(0, 6.0)
-            #ax.set_xlim(numpy.datetime64('2020-03-15'),X[-1])
+            ax.set_ylim(0, numpy.ceil(numpy.nanmax(shaded)))
+            ax.set_xlim(numpy.datetime64('2020-03-15'),X[-1])
             ax.set_axisbelow(True)
             ax.set_title(title, ha='center')
             ax.grid(which='minor', linestyle=':', linewidth=0.6, color='gray', axis='x')
@@ -115,7 +114,7 @@ if __name__ == '__main__':
 
             #print once per row
             if i % 6 == 0:
-                axes.flat[j].set_ylabel(r'$\mathcal{R}_t$', rotation=0)
+                axes.flat[i].set_ylabel(r'$\mathcal{R}_t$', rotation=0)
 
         plt.savefig(filename, transparent=False, dpi=600)
         plt.close()
