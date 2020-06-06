@@ -24,9 +24,9 @@ STATES = ['Alabama','Alaska','Arizona','Arkansas','California','Colorado',
 
 import os
 import sys
-import csv
 import argparse
 import numpy
+import pandas
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt, lines
@@ -68,7 +68,7 @@ if __name__ == '__main__':
     args=parser.parse_args()
     print('Reading file...')
     if os.path.isfile(args.filename):
-        Re = fileio.Table(args.filename)
+        Rt = pandas.read_csv(args.filename, index_col='Province_State')
         print('   {}'.format(args.filename))
     else:
         print('   File {} not found.'.format(args.filename))
@@ -88,50 +88,39 @@ if __name__ == '__main__':
         months = matplotlib.dates.MonthLocator()
         date_fmt = matplotlib.dates.DateFormatter('%b')   # https://docs.python.org/3/library/datetime.html#strftime-strptime-behavior
 
-        def rt_plot(ax, X, Ya, Y_highlight, highlight_name):
+        def rt_plot(ax, X, Y, shaded, title):
             #ax.locator_params(axis='x', nbins=4)
-            ax.set_ylim(0,5.0)
-            ax.set_xlim(numpy.datetime64('2020-03-15'),X[-1])
+            ax.set_ylim(0, 6.0)
+            #ax.set_xlim(numpy.datetime64('2020-03-15'),X[-1])
             ax.set_axisbelow(True)
-            ax.set_title(highlight_name, ha='center')
+            ax.set_title(title, ha='center')
             #ax.grid(which='major', linestyle=':', linewidth=0.6, color='gray', axis='x')
             ax.grid(which='minor', linestyle=':', linewidth=0.6, color='gray', axis='x')
             #shade in between
-            ax.fill_between(X, Ya[0], Ya[1], color=BUFF, lw=0)
-            ax.plot(X, Y_highlight, color=BLUE, lw=1)
+            ax.fill_between(X, shaded[0], shaded[1], color=BUFF, lw=0)
+            ax.plot(X, Y, color=BLUE, lw=1)
             ax.axhline(1, linestyle=':', lw=0.5)
             # format x axis (dates, by week)
-
-
             ax.xaxis.set_major_locator(months)
             ax.xaxis.set_major_formatter(date_fmt)
             ax.xaxis.set_minor_locator(weeks)
 
-        # get the data
-        X = numpy.array(Re.select('date'), dtype='datetime64')
-        Ya = numpy.array(list(zip(*Re.data[1:])), dtype=float)
-
-        # remove all-nan slices since this generates warnings
-        for i, Y in enumerate(Ya):
-            if False in numpy.isnan(Y):
-                break
-        X = X[i:]
-        Ya = Ya[i:]
-        Ys = list(numpy.nanpercentile(Ya, [0, 100], axis=1))
-
-
         plt.clf()
         plt.axis('off')
-        ncols = 6
-        nrows = int(numpy.ceil(len(STATES + ['United States']) / ncols))
-        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(15,3*nrows))
+        fig, axes = plt.subplots(nrows=9, ncols=6, figsize=(15,27))
         fig.suptitle('Estimated Rate of Spread, $\mathcal{R}_t$, of COVID-19 in the United States', ha='center')
 
         for j, state in enumerate(STATES + ['United States']):
-            Y_highlight = numpy.array(Re.select(state), dtype=float)[i:]
-            rt_plot(axes.flat[j], X, Ys, Y_highlight, state)
-            if j % ncols == 0:
+            rt_plot(ax = axes.flat[j],
+                    X = Rt.columns.to_numpy(dtype=numpy.datetime64),
+                    Y = Rt.loc[state].to_numpy(),
+                    shaded = numpy.nanpercentile(Rt.to_numpy(), [0, 100], axis=0),
+                    title = state)
+
+            #print once per row
+            if j % 6 == 0:
                 axes.flat[j].set_ylabel(r'$\mathcal{R}_t$', rotation=0)
+
         plt.savefig(filename, transparent=False, dpi=600)
         plt.close()
     print('   {}'.format(filename))

@@ -57,85 +57,70 @@ if __name__ == '__main__':
         print('   File {} not found.'.format(infile))
         exit()
     print('   {}'.format(infile))
-    df = pandas.read_csv(infile)
-    columns = list(df)
-    if columns[6] != 'Province_State' and columns[11] != '1/22/20':
+    cases = pandas.read_csv(infile)
+
+    # Integrity check
+    if cases.columns[6] != 'Province_State' and cases.columns[11] != '1/22/20':
         print('   File format may have changed. Columns may be different or shifted.')
         exit()
-    dates = numpy.array([numpy.datetime64("20{}-{}-{}".format(y, m.zfill(2), d.zfill(2))) for m, d, y in (s.split("/") for s in columns[11:])])
-    df.drop(['UID', 'iso2', 'iso3', 'code3', 'FIPS', 'Admin2', 'Country_Region', \
+
+    dates = numpy.array([numpy.datetime64("20{}-{}-{}".format(y, m.zfill(2), d.zfill(2))) for m, d, y in (s.split("/") for s in cases.columns[11:])])
+    cases.drop(['UID', 'iso2', 'iso3', 'code3', 'FIPS', 'Admin2', 'Country_Region', \
              'Lat', 'Long_', 'Combined_Key'], axis=1, inplace=True)
-    df = df.groupby(['Province_State']).sum().reset_index()
-    df.set_index('Province_State', inplace=True)
-    df.loc['United States'] = df.sum()
-
-    # Calculate new cases
-    new_cases = {}
-    for state in STATES + ['United States']:
-        new_cases[state] = []
-        for i, date in enumerate(dates):
-            if i == 0:
-                new_cases[state].append(df.loc[state][0])
-            else:
-                new_cases[state].append(df.loc[state][i]-df.loc[state][i-1])
-
-    # Calculate infectious cases
-    infectious_cases = {}
-    for state in STATES + ['United States']:
-        infectious_cases[state] = []
-        for i, date in enumerate(dates):
-            if i < 14:
-                infectious_cases[state].append(sum(new_cases[state][0:i]))
-            else:
-                infectious_cases[state].append(sum(new_cases[state][i-14:i]))
+    cases = cases.groupby(['Province_State']).sum().reset_index()
+    cases.set_index('Province_State', inplace=True)
+    cases.loc['United States'] = cases.sum()
 
     # Calculate Rt
-    Rt = {}
+    Rt = pandas.DataFrame(index = STATES + ['United States'], columns = dates)
+    Rt.index.name = 'Province_State'
     for state in STATES + ['United States']:
-        Rt[state] = []
+        new_cases = []
         for i, date in enumerate(dates):
-            # calculate average infectious cases over sample
-            baseline_infectious_cases = infectious_cases[state][i-SAMPLING_LENGTH]
-            if baseline_infectious_cases > 20 and i >= SAMPLING_LENGTH:   #noise filter
-                y = numpy.full(SAMPLING_LENGTH, baseline_infectious_cases)
-                y += df.loc[state][i-SAMPLING_LENGTH:i]
-                y -= df.loc[state][i-SAMPLING_LENGTH]
+            # 1. find num of infectious cases on first day of sampling period
+            #       defined as: number of new cases in the 14 days _preceding_
+            #                   the first day of the sampling period
+            if i == 0:
+                infected = 0
+            elif i < 14:
+                infected = cases.loc[state][i] - cases.loc[state][0]
+            else:
+                infected = cases.loc[state][i] - cases.loc[state][i-14]
+
+            # 2. calculate new cases
+            if i == 0:
+                new_cases += [cases.loc[state][i]]
+            else:
+                new_cases += [cases.loc[state][i]-cases.loc[state][i-1]]
+
+            # 3. check that there are enough cases and length for a valid Rt calculation
+            if cases.loc[state][i] > 20 and i > SAMPLING_LENGTH:
+                #y = numpy.full(SAMPLING_LENGTH, infected)
+                y = cases.loc[state][i-SAMPLING_LENGTH+1:i+1]
                 log_y = numpy.log(y)
                 x = list(range(SAMPLING_LENGTH))
                 slope, intercept, r_value, p_value, std_err = stats.linregress(x,log_y)
-                Rt[state].append(slope*SERIAL_INTERVAL)
+                Rt.loc[state][i] = slope*SERIAL_INTERVAL
             else:
-                Rt[state].append(numpy.nan)
+                Rt.loc[state][i] = numpy.nan
 
     # Internal integrity check
-    numrows = len(dates)
     for state in STATES + ['United States']:
-        if numrows != len(df.loc[state]) \
-        or numrows != len(new_cases[state]) \
-        or numrows != len(infectious_cases[state]) \
-        or numrows != len(Rt[state]):
+        if len(dates) != len(cases.loc[state]) or len(dates) != len(Rt.loc[state]):
             print("Error! Number of rows aren't even. Check algorithm.")
             exit()
 
     print()
     print('   Estimated Rt as of {}'.format(numpy.datetime64(dates[-1]).item().strftime('%b %d')))
     print()
-    print('   {:>20}   {:^5}   {:^9}   {:^9}   {:^9}'.format('Region', 'Rt', 'Total', 'New', 'Infectious'))
-    print('   {:>20}   {:^5}   {:^9}   {:^9}   {:^9}'.format('-'*20, '-'*5, '-'*9, '-'*9, '-'*9))
+    print('   {:>20}   {:^9}   {:^5}'.format('Region', 'Cases', 'Rt'))
+    print('   {:>20}   {:^9}   {:^5}'.format('-'*20, '-'*9, '-'*5))
     for state in STATES + ['United States']:
-        print('   {:>20}   {:0.3f}   {:9,}   {:9,}   {:9,}'.format(state, Rt[state][-1], df.loc[state][-1], new_cases[state][-1], infectious_cases[state][-1]))
+        print('   {:>20}   {:9,}   {:0.3f}'.format(state, cases.loc[state][-1], Rt.loc[state][-1]))
 
     print('Writing files...')
-    filename = os.path.join(args.output_path, 'cases.csv')
-    df.to_csv(outfile)
-    print('   {}'.format(outfile))
-
-    Rt_obj = fileio.Table()
-    Rt_obj.filename = os.path.join(args.output_path, 'Rt.csv')
-    print('   {}'.format(Rt_obj.filename))
-    Rt_obj.headers = ['date'] + STATES + ['United States']
-    Rt_obj.write_metadata(overwrite=True)
-    for i in range(len(dates)):
-        row = [dates[i]] + [Rt[state][i] for state in STATES + ['United States']]
-        Rt_obj.write([row])
+    for df, filename in zip([cases, Rt], ['cases.csv', 'Rt.csv']):
+        outfile = os.path.join(args.output_path, filename)
+        df.to_csv(os.path.join(outfile))
+        print('   {}'.format(outfile))
     print('Done.\n')
